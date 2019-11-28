@@ -26,7 +26,7 @@ python import_data.py
 ```
 python hwe_analysis.py
 ```
-6) Produce all the figures and tables:
+6) Produce all the figures and tables (this will rewrite the original versions in "figures" and "tables" folders):
 ```
 python figures.py
 ```
