@@ -399,219 +399,205 @@ query GnomadVariant($variantId: String!, $datasetId: DatasetId!, $referenceGenom
     pos
     ref
     alt
-    ... on GnomadVariantDetails {
-      colocatedVariants
-      multiNucleotideVariants {
-        combined_variant_id
-        changes_amino_acids
-        n_individuals
-        other_constituent_snvs
+    colocatedVariants
+    multiNucleotideVariants {
+      combined_variant_id
+      changes_amino_acids
+      n_individuals
+      other_constituent_snvs
+    }
+    exome {
+      ac
+      an
+      ac_hemi
+      ac_hom
+      faf95 {
+        popmax
+        popmax_population
       }
-      exome {
+      filters
+      populations {
+        id
         ac
         an
         ac_hemi
         ac_hom
-        faf95 {
-          popmax
-          popmax_population
+      }
+      age_distribution {
+        het {
+          bin_edges
+          bin_freq
+          n_smaller
+          n_larger
         }
-        filters
-        populations {
-          id
-          ac
-          an
-          ac_hemi
-          ac_hom
-        }
-        age_distribution {
-          het {
-            bin_edges
-            bin_freq
-            n_smaller
-            n_larger
-          }
-          hom {
-            bin_edges
-            bin_freq
-            n_smaller
-            n_larger
-          }
-        }
-        qualityMetrics {
-          alleleBalance {
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-          }
-          genotypeDepth {
-            all {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-          }
-          genotypeQuality {
-            all {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-          }
-          siteQualityMetrics {
-            BaseQRankSum
-            ClippingRankSum
-            DP
-            FS
-            InbreedingCoeff
-            MQ
-            MQRankSum
-            pab_max
-            QD
-            ReadPosRankSum
-            RF
-            SiteQuality
-            SOR
-            VQSLOD
-          }
-        }
-        reads {
-          bamPath
-          category
-          indexPath
-          readGroup
+        hom {
+          bin_edges
+          bin_freq
+          n_smaller
+          n_larger
         }
       }
-      genome {
+      qualityMetrics {
+        alleleBalance {
+          alt {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+        }
+        genotypeDepth {
+          all {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+          alt {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+        }
+        genotypeQuality {
+          all {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+          alt {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+        }
+        siteQualityMetrics {
+          BaseQRankSum
+          ClippingRankSum
+          DP
+          FS
+          InbreedingCoeff
+          MQ
+          MQRankSum
+          pab_max
+          QD
+          ReadPosRankSum
+          RF
+          SiteQuality
+          SOR
+          VQSLOD
+        }
+      }
+    }
+    genome {
+      ac
+      an
+      ac_hemi
+      ac_hom
+      faf95 {
+        popmax
+        popmax_population
+      }
+      filters
+      populations {
+        id
         ac
         an
         ac_hemi
         ac_hom
-        faf95 {
-          popmax
-          popmax_population
+      }
+      age_distribution {
+        het {
+          bin_edges
+          bin_freq
+          n_smaller
+          n_larger
         }
-        filters
-        populations {
-          id
-          ac
-          an
-          ac_hemi
-          ac_hom
+        hom {
+          bin_edges
+          bin_freq
+          n_smaller
+          n_larger
         }
-        age_distribution {
-          het {
+      }
+      qualityMetrics {
+        alleleBalance {
+          alt {
             bin_edges
             bin_freq
             n_smaller
             n_larger
           }
-          hom {
+        }
+        genotypeDepth {
+          all {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
+          }
+          alt {
             bin_edges
             bin_freq
             n_smaller
             n_larger
           }
         }
-        qualityMetrics {
-          alleleBalance {
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
+        genotypeQuality {
+          all {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
           }
-          genotypeDepth {
-            all {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-          }
-          genotypeQuality {
-            all {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-            alt {
-              bin_edges
-              bin_freq
-              n_smaller
-              n_larger
-            }
-          }
-          siteQualityMetrics {
-            BaseQRankSum
-            ClippingRankSum
-            DP
-            FS
-            InbreedingCoeff
-            MQ
-            MQRankSum
-            pab_max
-            QD
-            ReadPosRankSum
-            RF
-            SiteQuality
-            SOR
-            VQSLOD
+          alt {
+            bin_edges
+            bin_freq
+            n_smaller
+            n_larger
           }
         }
-        reads {
-          bamPath
-          category
-          indexPath
-          readGroup
+        siteQualityMetrics {
+          BaseQRankSum
+          ClippingRankSum
+          DP
+          FS
+          InbreedingCoeff
+          MQ
+          MQRankSum
+          pab_max
+          QD
+          ReadPosRankSum
+          RF
+          SiteQuality
+          SOR
+          VQSLOD
         }
       }
-      flags
-      rsid
-      sortedTranscriptConsequences {
-        canonical
-        gene_id
-        gene_symbol
-        hgvs
-        hgvsc
-        hgvsp
-        lof
-        lof_flags
-        lof_filter
-        major_consequence
-        polyphen_prediction
-        sift_prediction
-        transcript_id
-      }
+    }
+    flags
+    rsid
+    sortedTranscriptConsequences {
+      canonical
+      gene_id
+      gene_symbol
+      hgvs
+      hgvsc
+      hgvsp
+      lof
+      lof_flags
+      lof_filter
+      major_consequence
+      polyphen_prediction
+      sift_prediction
+      transcript_id
     }
   }
   clinvar_variant(variant_id: $variantId, reference_genome: $referenceGenome) {
-    allele_id
+    clinvar_variation_id
   }
 }&operationName=GnomadVariant&variables=
 """
@@ -677,7 +663,6 @@ def get_gene_variants_by_gene_name(gene_name, dataset_id='gnomad_r2_1', timeout=
     gnomad_r2_1_non_cancer
     gnomad_r2_1_non_topmed
   '''
-  print GNOMAD_API_URL + GENE_NAME_VARIANTS_QUERY_VIEW + '{' + gene_variants_query + '}'
   gene_variants_query = GENE_NAME_VARIANTS_QUERY_PARAMS.format(dataset_id=dataset_id, gene_name=gene_name)
   response = requests.post(GNOMAD_API_URL + GENE_NAME_VARIANTS_QUERY_VIEW + '{' + gene_variants_query + '}', timeout=timeout)
 

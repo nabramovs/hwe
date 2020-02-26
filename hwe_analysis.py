@@ -11,11 +11,14 @@ from common import MongoDB, get_xpos, write_table_to_csv, get_confidence_interva
 from hardy_weinberg import Hardy_Weinberg_Equilibrium_exact_test_user_Kantale as hwe #(obs_hets, obs_hom1, obs_hom2)
 from gnomad_api import get_variant_details, get_variant_details_gnomad_3
 from scipy.stats import fisher_exact, skew
+from statsmodels.stats.multitest import multipletests
 from figures import calculate_single_pop_significant_af_thresholds_data
 
 HWE_P_VALUE_THRESHOLD = 0.05
-RARE_HET_EXCESS_MAX_AF = 0.1
+RARE_HET_EXCESS_MAX_AF = 0.05
 ALLELE_BALANCE_MID_RATIO_THRESHOLD = 0.5
+
+POP_ORDER = ['NFE', 'AMR', 'SAS', 'FIN', 'AFR', 'EAS', 'ASJ']
 
 POP_SIZES = OrderedDict()
 POP_SIZES['NFE'] = 64603
@@ -731,6 +734,86 @@ def create_rare_het_excess_variants(db):
 	bar.finish()
 
 
+def get_variant_pop_ac_proportions(db, variant_id):
+	variant = db.hw.gnomad_variants.find_one({'variant_id': variant_id})
+	pop_hets = {}
+
+	if variant['genome']:
+		for pop_stats in variant['genome']['populations']:
+			pop = pop_stats['id']
+			pop_hets[pop] = pop_stats['ac'] - pop_stats['ac_hom'] * 2
+
+	if variant['exome'] and variant['genome']:
+		genomes_and_exomes = True
+		for pop_stats in variant['exome']['populations']:
+			pop = pop_stats['id']
+			pop_hets[pop] += pop_stats['ac'] - pop_stats['ac_hom'] * 2
+
+	elif variant['exome']:
+		for pop_stats in variant['exome']['populations']:
+			pop = pop_stats['id']
+			pop_hets[pop] = pop_stats['ac'] - pop_stats['ac_hom'] * 2
+
+	total_ac = float(sum(pop_hets.values()))
+	pop_proportions = {}
+	for pop, ac in pop_hets.iteritems():
+		pop_proportions[pop] = ac / total_ac
+
+	return pop_proportions
+
+
+def update_rare_het_excess_variants_with_skeweb_ab_stats(db, remove=False):
+	variants = db.hw.rare_het_excess_variants.find({})
+	if remove:
+		for variant in variants:
+			variant_id = variant['variant_id']
+			db.hw.rare_het_excess_variants.update({"variant_id": variant_id}, 
+												  { "$unset": { 'possible_hom_ab>09': "",
+												  				'possible_hom_ab>08': "",
+												  				'ab_adjusted_het': "",
+												  				'ab_adjusted_hom': "",
+												  				'ab_adjusted_hwe_p_value': "",
+												  				'ab_adjusted_balance': "",
+												  				'het_ac_proportion': "",
+												  				}})
+	else:
+		variants_with_possible_homs = set([])
+		for variant in variants:
+			variant_id = variant['variant_id']
+			variant_ab = db.hw.rare_variants_ab.find_one({'_id': variant_id})
+			variant_ab = variant_ab['ab_values']
+			possible_hom_09 = sum(variant_ab[18:])  # het AB = >0.9
+			possible_hom_08 = sum(variant_ab[16:])
+
+			pop_ac_proportions = get_variant_pop_ac_proportions(db, variant_id)
+
+			pop_possible_hom = int(round(possible_hom_08 * pop_ac_proportions[variant['pop']]))
+
+			adj_het = variant['het'] - pop_possible_hom
+			adj_hom = variant['hom'] + pop_possible_hom
+			ref_hom = variant['ref_hom']
+			adj_hwe_p_value = hwe(adj_het, adj_hom, ref_hom)
+
+			if adj_hom < variant['exp_hom']:
+				adj_balance = '-'
+			else:
+				adj_balance = '+'		
+
+			adj_hwe = OrderedDict()
+			adj_hwe['possible_hom_ab>09'] = possible_hom_09
+			adj_hwe['possible_hom_ab>08'] = possible_hom_08
+			adj_hwe['het_ac_proportion'] = pop_ac_proportions[variant['pop']]
+			adj_hwe['ab_adjusted_het'] = adj_het
+			adj_hwe['ab_adjusted_hom'] = adj_hom
+			adj_hwe['ab_adjusted_hwe_p_value'] = adj_hwe_p_value
+			adj_hwe['ab_adjusted_balance'] = adj_balance
+			if adj_balance == '-' and adj_hwe_p_value <= 0.05:
+				adj_hwe['ab_adjusted_hwe_het_exc'] = True
+			else:
+				adj_hwe['ab_adjusted_hwe_het_exc'] = False
+
+			db.hw.rare_het_excess_variants.update_many({'variant_id': variant_id, 'pop': variant['pop']}, {'$set': adj_hwe})
+
 #################
 ### GNOMAD v3 ###
 #################
@@ -775,7 +858,7 @@ def import_rare_het_exc_variants_lift_over_results(db):
 	db.hw.stats.insert(data)
 
 
-def update_rare_het_exc_variants_with_gnomad_3_data(db):
+def update_rare_het_exc_variants_with_gnomad_3_data(db, clean=False):
 	pops_max_an_g3 = OrderedDict()
 	pops_max_an_g3['AFR'] = 21042 * 2
 	pops_max_an_g3['AMR'] = 6835 * 2
@@ -791,6 +874,7 @@ def update_rare_het_exc_variants_with_gnomad_3_data(db):
 
 	for variant_id in variant_ids:
 		het_exc_variants = db.hw.rare_het_excess_variants.find({'variant_id': variant_id})
+
 		variant_pops[variant_id] = []
 		for het_exc_variant in het_exc_variants:
 			variant_pops[variant_id].append(het_exc_variant['pop'])
@@ -801,6 +885,12 @@ def update_rare_het_exc_variants_with_gnomad_3_data(db):
 	for variant_id, variant_id_38 in variant_ids.iteritems():
 		pops = variant_pops[variant_id]
 		variant_38 = get_variant_details_gnomad_3(variant_id_38, timeout=120)
+		variant_ab, site_qm = parse_gnomad_variant_ab_data(variant_38, genome=True)
+		ab_mid_ratio = float(variant_ab[0.45] + variant_ab[0.5] + variant_ab[0.55]) / sum(variant_ab.values())
+
+		possible_hom_09 = sum(variant_ab.values()[18:])  # het AB = >0.9
+		possible_hom_08 = sum(variant_ab.values()[16:])
+
 		variant_38 = variant_38['genome']
 		filters = variant_38['filters']
 		if len(filters) == 0:
@@ -808,6 +898,12 @@ def update_rare_het_exc_variants_with_gnomad_3_data(db):
 		else:
 			filters = ', '.join(filters)
 		pops_data = variant_38['populations']
+
+		total_hets = 0
+		for pop_data in pops_data:
+			if pop_data['id'] in set(['AFR', 'AMI', 'AMR', 'ASJ', 'EAS', 'FIN', 'NFE', 'OTH', 'SAS']):
+				total_hets += pop_data['ac'] - pop_data['ac_hom'] * 2
+
 		for pop_data in pops_data:
 			pop = pop_data['id']
 			if pop not in pops:
@@ -829,22 +925,152 @@ def update_rare_het_exc_variants_with_gnomad_3_data(db):
 			else:
 				balance = '+'
 
+			# AB Adjusted HWE calculation
+			pop_het_ac_proportion = het / float(total_hets)
+			pop_possible_hom = int(round(possible_hom_08 * pop_het_ac_proportion))
+			adj_het = het - pop_possible_hom
+			adj_hom = hom + pop_possible_hom
+			adj_hwe_p_value = hwe(adj_het, adj_hom, ref_hom)
+
+			if adj_hom < exp_hom:
+				adj_balance = '-'
+			else:
+				adj_balance = '+'		
+
+			g3_stats = OrderedDict()
+			g3_stats['gnomad_v3_variant_id'] = variant_id_38
+			g3_stats['gnomad_v3_ac'] = ac
+			g3_stats['gnomad_v3_an'] = an
+			g3_stats['gnomad_v3_an_ratio'] = an_ratio
+			g3_stats['gnomad_v3_af'] = af
+			g3_stats['gnomad_v3_het'] = het
+			g3_stats['gnomad_v3_exp_het'] = exp_het
+			g3_stats['gnomad_v3_hom'] = hom
+			g3_stats['gnomad_v3_exp_hom'] = exp_hom
+			g3_stats['gnomad_v3_hwe_p_value'] = hwe_p_value
+			g3_stats['gnomad_v3_balance'] = balance
+			g3_stats['gnomad_v3_filters'] = filters
+			g3_stats['gnomad_v3_ab_mid_ratio'] = ab_mid_ratio
+			g3_stats['gnomad_v3_possible_hom_ab>09'] = possible_hom_09
+			g3_stats['gnomad_v3_possible_hom_ab>08'] = possible_hom_08
+			g3_stats['gnomad_v3_het_ac_proportion'] = pop_het_ac_proportion
+			g3_stats['gnomad_v3_ab_adjusted_het'] = adj_het
+			g3_stats['gnomad_v3_ab_adjusted_hom'] = adj_hom
+			g3_stats['gnomad_v3_ab_adjusted_hwe_p_value'] = adj_hwe_p_value
+			g3_stats['gnomad_v3_ab_adjusted_balance'] = adj_balance
+
 			db.hw.rare_het_excess_variants.update({"variant_id": variant_id, "pop": pop}, 
-												  { '$set': { 'ac_g3': ac,
-															  'an_g3': an,
-															  'an_ratio_g3': an_ratio,
-															  'af_g3': af,
-															  'het_g3': het,
-															  'exp_het_g3': exp_het,
-															  'hom_g3': hom,
-															  'exp_hom_g3': exp_hom,
-															  'hwe_p_value_g3': hwe_p_value,
-															  'balance_g3': balance,
-															  'filters_g3': filters }})
-		time.sleep(1)
+												  { '$set': g3_stats})
+
+		time.sleep(2)
 		line_number += 1
 		bar.update((line_number + 0.0) / total_lines)
 	bar.finish()
+
+
+########################
+### Multiple Testing ###
+########################
+
+def calculate_multiple_testing_adjustments(db):
+	pop_het_excess_sign_thresholds = {}
+	for pop, individuals_num in POP_SIZES.iteritems():
+		pop_het_excess_sign_thresholds[pop] = calculate_single_pop_significant_af_thresholds_data(individuals_num, 0)['af']
+
+	pop_candidate_het_excess_variants = OrderedDict()
+	for pop in POP_ORDER:
+		pop_candidate_het_excess_variants[pop] = OrderedDict()
+
+	variant_ab_mid_ratios = {}
+	variant_abs = db.hw.rare_variants_ab.find({})
+	for variant_ab in variant_abs:
+		variant_ab_mid_ratios[variant_ab['variant_id']] = variant_ab['ab_mid_ratio']
+
+	# FILTER: calculate number and genes of not het excess variants
+	# Potential problem of using FDR rate is that rare variants can deviate from HWE
+	# statistically significantly more due to heterozygote deficiency, then excess.
+	variants = db.hw.variants_hwe_pop.find({"balance": "-",
+											"all_pop_an_ratio_pass": True,
+											"alt_af": { "$lt": 0.001 },
+											"tandem_repeat": False,
+											"seg_dup": False,
+											"max_pop_af": { "$lte": RARE_HET_EXCESS_MAX_AF } })	
+
+	total_lines = variants.count()
+	line_number = 0
+	bar = progressbar.ProgressBar(maxval=1.0).start()
+	for variant in variants:
+		variant_id = variant['variant_id']
+		pop = variant['pop']
+		af = variant['af']
+		gene_name = variant['gdit_gene_name']
+		# FILTER: DO NOT INCLUDE RARE VARIANTS which cannot be potentially heterozygote advantageous
+		if af > pop_het_excess_sign_thresholds[pop]: #  and af <= RARE_HET_EXCESS_MAX_AF
+			if variant_ab_mid_ratios[variant_id] > ALLELE_BALANCE_MID_RATIO_THRESHOLD:
+				pop_candidate_het_excess_variants[pop][variant_id] = variant['hwe_p_value']
+
+		line_number += 1
+		bar.update((line_number + 0.0) / total_lines)
+	bar.finish()
+
+	pop_adjusted_p_values = OrderedDict()
+	for pop, variants in pop_candidate_het_excess_variants.iteritems():
+		# fdr_bh Benjamini/Hochberg
+		# fdr_by Benjamini/Yekutieli
+		# bonferroni Bonferroni
+		rejects, adjusted_p_values, alphacSidak, alphacBonf = multipletests(variants.values(), method='fdr_bh')
+		pop_adjusted_p_values[pop] = OrderedDict()
+		for x in range(0, len(variants)):
+			variant_id = variants.keys()[x]
+			adjusted_p_value = adjusted_p_values[x]
+			pop_adjusted_p_values[pop][variant_id] = adjusted_p_value
+
+	db.hw.stats.delete_one({'_id': 'f3_adjusted_p_values'})
+	db.hw.stats.insert({'_id': 'f3_adjusted_p_values', 'data': pop_adjusted_p_values})
+
+
+def add_multiple_testing_adjustments(db, remove=False):
+	if remove:
+		variants = db.hw.rare_het_excess_variants.find({})
+		for variant in variants:
+			variant_id = variant["variant_id"]
+			pop = variant["pop"]
+			db.hw.rare_het_excess_variants.update({"variant_id": variant_id, "pop": pop}, 
+												  { "$unset": { 'benjamini_hochberg_adjusted_p_value': ""}})
+	else:
+		pop_variant_adjusted_p_values = db.hw.stats.find_one({'_id': 'f3_adjusted_p_values'})
+		pop_variant_adjusted_p_values = pop_variant_adjusted_p_values['data']
+
+		variants = db.hw.rare_het_excess_variants.find({})
+		for variant in variants:
+			variant_id = variant["variant_id"]
+			pop = variant["pop"]
+			db.hw.rare_het_excess_variants.update({"variant_id": variant_id, "pop": pop}, 
+												  { '$set': { 'benjamini_hochberg_adjusted_p_value': pop_variant_adjusted_p_values[pop][variant_id]}})
+
+
+def export_adjusted_p_value_stats(db):
+	pop_variant_adjusted_p_values = db.hw.stats.find_one({'_id': 'f3_adjusted_p_values'})
+	pop_variant_adjusted_p_values = pop_variant_adjusted_p_values['data']
+
+	headers = ['variant_id', 'pop', 'raw_p_value', 'adjusted_p_value', 'balance']
+	table = [headers]
+	variants = db.hw.variants_hwe_pop.find({})
+	for variant in variants:
+		variant_id = variant['variant_id']
+		pop = variant['pop']
+		if variant_id not in pop_variant_adjusted_p_values[pop]:
+			continue
+		row = [variant_id,
+			   pop,
+			   variant['hwe_p_value'],
+			   pop_variant_adjusted_p_values[pop][variant_id],
+			   variant['balance'],
+			  ]
+		table.append(row)
+
+	output_csv = OUTPUT_FOLDER + 'adjusted_p_values_report.csv'
+	write_table_to_csv(table, output_csv)
 
 
 def main():
@@ -868,17 +1094,29 @@ def main():
 	# It creates "rare_variants_ab" collection, which is used for further variant filtering (low AB might be a sign of sequencing errors).
 	# !!! IMPORTANT !!! 
 	# It works with gnomAD API (i.e. requires internet connection) and can take up to a couple of days to run!!!
-	#create_rare_variants_ab(db)
+	######create_rare_variants_ab(db)
 
 	# This function creates a dataset ("rare_het_excess_variants" collection) of variants with heterozygous excess (HetExc)
 	#create_rare_het_excess_variants(db)
+	# This function marks HetExc variants with skewed allele balance (>0.9 and 0.8)
+	#update_rare_het_excess_variants_with_skeweb_ab_stats(db, remove=False)
 
 	# These functions export HetExc variant chromosomal coordinates for LiftOver conversion (this has to be done manually),
 	# import converted variants (./tables/het_exc_variants_build_38.csv) back to the "rare_het_excess_variants" collection
 	# and use these new coordinates to get allele data from gnomAD v3 via API.	
 	#export_rare_het_exc_variants_for_lift_over(db)
 	#import_rare_het_exc_variants_lift_over_results(db)
-	#update_rare_het_exc_variants_with_gnomad_3_data(db)
+	#update_rare_het_exc_variants_with_gnomad_3_data(db, clean=False)
+
+	# Multiple Test corrections, not used since they are too conservative.
+	# HBB example was found, but not CFTR:
+	#calculate_multiple_testing_adjustments(db)
+	#add_multiple_testing_adjustments(db, remove=False)
+	#export_adjusted_p_value_stats(db)
+
+	#calculate_eas_inbreeding_coeff_variants(db)
+
+	pass
 
 if __name__ == "__main__":
 	sys.exit(main())

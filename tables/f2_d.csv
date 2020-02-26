@@ -1,0 +1,6 @@
+Comparison of variants with VCNAB < 50%% in the whole Ref group and a subset of variants with statistically significant excess of heterozygotes (HetExc) in Ref group.,,
+,VCNAB < 50%,All
+Ref,1181,40801
+Ref HetExc,49,348
+fold_enrichemnt:,4.864494827099574,
+p-value:,1.9194072652484428e-17,

@@ -92,3 +92,12 @@ def get_xpos(chrom, pos):
 	Borrowed from xbrowse
 	"""
 	return get_single_location(chrom, int(pos))
+
+
+def sort_dict_by_values(dictionary, reverse=False):
+	"""Return dictionary sorted by values."""
+	sorted_tuples = sorted(dictionary.items(), key=lambda x: x[1], reverse=reverse)
+	result = OrderedDict()
+	for x in range(0, len(sorted_tuples)):
+		result[sorted_tuples[x][0]] = sorted_tuples[x][1]
+	return result

@@ -1,0 +1,6 @@
+Comparison of variants deviating from HWE due to HetExc which are located in segmental duplication regions and reference (Ref) group (i.e. all other regions except segmental duplications and tandem repeats),,
+,HetExc,All
+Segmental Duplication,56,2676
+Ref,348,40801
+fold_enrichemnt:,2.453541913647063,
+p-value:,2.0446355062422967e-08,

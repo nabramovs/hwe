@@ -15,21 +15,13 @@ from common import MongoDB, write_table_to_csv, get_confidence_intervals
 from hardy_weinberg import Hardy_Weinberg_Equilibrium_exact_test_user_Kantale as hwe
 
 HWE_P_VALUE_THRESHOLD = 0.05
-RARE_HET_EXCESS_MAX_AF = 0.1
+RARE_HET_EXCESS_MAX_AF = 0.05
 ALLELE_BALANCE_MID_RATIO_THRESHOLD = 0.5
 
 # NOTE: if you recreate "rare_het_excess_variants" dataset with different filters
 # To check clinvar consequences in rare het excess variants set run:
 # report_clinvar_statuses_in_rare_het_excess_genes(db)
-'''
-Benign/Likely_benign 29
-Pathogenic 2
-Conflicting_interpretations_of_pathogenicity 5
-Benign 32
-not_provided 1
-Likely_benign 30
-Empty 527
-'''
+
 
 CLINVAR_BENIGN_STATUSES = set(['Benign', 'Likely_benign', 'Benign/Likely_benign'])
 CLINVAR_CONFLICTING_STATUSES = set(['Conflicting_interpretations_of_pathogenicity'])
@@ -80,6 +72,18 @@ C_GREEN = '#00cc00'
 C_ORANGE = '#ff7f0e' # '#ff8c1a'
 C_BLUE = '#1f77b4' # '#0066ff'
 C_BLACK = '#000000'
+
+
+def export_fisher_test_results(table_name, title, group_names, variable_names, group_1_values, group_2_values, fold_enrichemnt, p_value, subtitle=''):
+	table = [[title, '', ''],
+			 [subtitle] + variable_names,
+			 [group_names[0]] + group_1_values,
+			 [group_names[1]] + group_2_values,
+			 ['fold_enrichemnt:', fold_enrichemnt, ''],
+			 ['p-value:', p_value, ''],
+			] 
+	output_csv = OUTPUT_FOLDER + table_name
+	write_table_to_csv(table, output_csv)
 
 
 def bar_chart_get_bar_width_and_x_paddings(n_bars, base_width=0.8):
@@ -418,7 +422,7 @@ def get_list_of_values_from_dict_by_keys(keys, dictionary):
 
 def calculate_f2_data(db):
 	print '--- Calculating data for Figure 2... ---'
-	variants = db.hw.rare_variants_ab.find({ "min_alt_af": { "$lt": 0.001 }, "all_pop_an_ratio_pass": True, "max_pop_af": { "$lt": RARE_HET_EXCESS_MAX_AF }})
+	variants = db.hw.rare_variants_ab.find({ "min_alt_af": { "$lt": 0.001 }, "all_pop_an_ratio_pass": True, "max_pop_af": { "$lte": RARE_HET_EXCESS_MAX_AF }})
 
 	variants_ab = {}
 	all_variants = set([])
@@ -553,19 +557,28 @@ def draw_f2_repeat_variants_ab(subplot_num, f2_data):
 
 	ref_data = f2_data['not_in_repeat_variants_abs']
 	rep_data = f2_data['tandem_repeat_variants_abs'] + f2_data['seg_dup_variants_abs']
+	tr_data = f2_data['tandem_repeat_variants_abs']
+	sd_data = f2_data['seg_dup_variants_abs']
 
 	get_confidence_intervals(ref_data, stats_name='Ref', alpha=0.80)
 	get_confidence_intervals(rep_data, stats_name='Segdup+tandem repeat', alpha=0.80)
+	get_confidence_intervals(tr_data, stats_name='Tandem repeat', alpha=0.80)
+	get_confidence_intervals(sd_data, stats_name='Segdup', alpha=0.80)
 	get_confidence_intervals(ref_data, stats_name='Ref', alpha=0.95)
 
 	ref_weights = np.ones_like(ref_data)/(float(len(ref_data)) / 100)
-	rep_weights = np.ones_like(rep_data)/(float(len(rep_data)) / 100)
+
+	sd_weights = np.ones_like(sd_data)/(float(len(sd_data)) / 100)
+	tr_weights = np.ones_like(tr_data)/(float(len(tr_data)) / 100)
 
 	ref_name = 'Ref'
-	rep_name = 'Segmental\nduplication &\ntandem repeat'
+	sd_name = 'Segmental\nduplication'
+	tr_name = 'Tandem repeat'
 
-	bins = np.linspace(0, 100, 25)
-	plt.hist([ref_data, rep_data], bins=bins, label=[ref_name, rep_name], weights=[ref_weights, rep_weights])
+	seg_dup_weights = np.ones_like(rep_data)/(float(len(rep_data)) / 100)
+
+	bins = np.linspace(0, 100, 20)
+	plt.hist([ref_data, sd_data, tr_data], bins=bins, label=[ref_name, sd_name, tr_name], weights=[ref_weights, sd_weights, tr_weights])
 
 	plt.legend(loc='upper left', frameon=False, ncol=1, fontsize=F2_NORMAL_FONTSIZE)
 	ax.set_xlabel('Carriers with normal allele balance (%)', fontsize=F2_AXIS_FONTSIZE)
@@ -638,6 +651,10 @@ def draw_f2_low_ab(subplot_num, f2_data):
 	nir_low_ab_stats = [nir_ab_low, f2_data['not_in_repeat_variants']]
 	he_nir_low_ab_stats = [he_nir_ab_low, f2_data['not_in_repeat_het_excess_variants']]
 	low_ab_fe, low_ab_p_value = fisher_exact([he_nir_low_ab_stats, nir_low_ab_stats])
+
+	title = 'Comparison of variants with VCNAB < 50%% in the whole Ref group and a subset of variants with statistically significant excess of heterozygotes (HetExc) in Ref group.'
+	export_fisher_test_results('f2_d.csv', title, ['Ref', 'Ref HetExc'], ['VCNAB < 50%', 'All'], nir_low_ab_stats, he_nir_low_ab_stats, low_ab_fe, low_ab_p_value)
+
 	print 'LOW AB Ref/HetExc', low_ab_fe, low_ab_p_value
 
 	# To report raw number in scientific notation use this: '%.2E' % low_ab_p_value
@@ -685,7 +702,11 @@ def draw_f2_repeats(subplot_num, f2_data):
 	seg_dup_stats = [f2_data['seg_dup_het_excess_variants'], f2_data['seg_dup_variants']]
 	tandem_repeat_stats = [f2_data['tandem_repeat_het_excess_variants'], f2_data['tandem_repeat_variants']]
 	seg_dup_fe, seg_dup_p_value = fisher_exact([seg_dup_stats, ref_stats])
+	title = 'Comparison of variants deviating from HWE due to HetExc which are located in segmental duplication regions and reference (Ref) group (i.e. all other regions except segmental duplications and tandem repeats)'
+	export_fisher_test_results('f2_a_1.csv', title, ['Segmental Duplication', 'Ref'], ['HetExc', 'All'], seg_dup_stats, ref_stats, seg_dup_fe, seg_dup_p_value)
 	tandem_repeat_fe, tandem_repeat_p_value = fisher_exact([tandem_repeat_stats, ref_stats])
+	title = 'Comparison of variants deviating from HWE due to HetExc which are located in tandem repeat regions and reference (Ref) group (i.e. all other regions except segmental duplications and tandem repeats)'
+	export_fisher_test_results('f2_a_2.csv', title, ['Tandem Repeat', 'Ref'], ['HetExc', 'All'], tandem_repeat_stats, ref_stats, tandem_repeat_fe, tandem_repeat_p_value)
 
 	print 'Tandem Repeat FE:', tandem_repeat_fe, 'p-value:', tandem_repeat_p_value
 	print 'Segmental Duplication FE:', seg_dup_fe, 'p-value:', seg_dup_p_value
@@ -717,7 +738,7 @@ def draw_f2_repeats(subplot_num, f2_data):
 
 def report_clinvar_statuses_in_rare_het_excess_genes(db):
 	clinvar_statuses = {}
-	variants = db.hw.rare_het_excess_variants.find({})
+	variants = db.hw.rare_het_excess_variants.find({ "ab_adjusted_hwe_het_exc": True })
 	for variant in variants:
 		clinvar_status = variant['clinvar_significance']
 		if not clinvar_status:
@@ -751,8 +772,7 @@ def caculate_f3_data(db):
 	pop_het_excess_clinvar['Benign or Likely_benign'] = set([])
 	pop_het_excess_clinvar['Unknown'] = set([])
 	
-	db.hw.candidate_het_advantage_variants.drop()
-	rare_het_excess_variants = db.hw.rare_het_excess_variants.find({})
+	rare_het_excess_variants = db.hw.rare_het_excess_variants.find({ "ab_adjusted_hwe_het_exc": True })
 
 	for rare_het_excess_variant in rare_het_excess_variants:
 
@@ -810,6 +830,7 @@ def caculate_f3_data(db):
 	pop_not_het_excess_genes = set([])
 
 	variant_ab_mid_ratios = {}
+
 	variant_abs = db.hw.rare_variants_ab.find({})
 	for variant_ab in variant_abs:
 		variant_ab_mid_ratios[variant_ab['variant_id']] = variant_ab['ab_mid_ratio']
@@ -821,7 +842,7 @@ def caculate_f3_data(db):
 											"alt_af": { "$lt": 0.001 },
 											"tandem_repeat": False,
 											"seg_dup": False,
-											"max_pop_af": { "$lt": RARE_HET_EXCESS_MAX_AF } })
+											"max_pop_af": { "$lte": RARE_HET_EXCESS_MAX_AF } })
 	total_lines = variants.count()
 	line_number = 0
 	bar = progressbar.ProgressBar(maxval=1.0).start()
@@ -831,7 +852,7 @@ def caculate_f3_data(db):
 		af = variant['af']
 		gene_name = variant['gdit_gene_name']
 		# FILTER: DO NOT INCLUDE RARE VARIANTS which cannot be potentially heterozygote advantageous
-		if af >= pop_het_excess_sign_thresholds[pop]: #  and af <= RARE_HET_EXCESS_MAX_AF
+		if af > pop_het_excess_sign_thresholds[pop]: #  and af <= RARE_HET_EXCESS_MAX_AF
 			if variant_ab_mid_ratios[variant_id] > ALLELE_BALANCE_MID_RATIO_THRESHOLD:
 				if variant_id not in het_excess_unique_variants:
 					pop_not_het_excess_variants[pop] += 1
@@ -960,6 +981,11 @@ def report_f3_pop_stats(f3_data):
 		fe, p_value = fisher_exact([he_data, nhe_data])
 		print '{} {} out of {} in HetExc vs {} out of {} in HetExc-'.format(pop, he_vars, he_unique_vars, nhe_vars, nhe_unique_vars)
 		print '{} FE:{} p-value: {}'.format(pop, fe, p_value)
+		table_name = 'f3_a_' + pop + '.csv'
+		title = 'Comparison of proportions of variants deviating and not deviating from HWE due to excess of heterozygotes (HetExc and HetExc- respectively) in 7 major gnomAD populations.'
+		group_names = ['HetExc', 'HetExc-']
+		variable_names = [pop, 'all populations']
+		export_fisher_test_results(table_name, title, group_names, variable_names, he_data, nhe_data, fe, p_value)
 
 
 def draw_f3_clin_var(subplot_num, f3_data, title='', annotation_type='', xticks=[], x_offset=0):
@@ -1071,13 +1097,18 @@ def draw_f3_ad_ar_stats(subplot_num, f3_data, title='', annotation_type='', xtic
 
 	ar_fe, ar_p_value = fisher_exact([he_ar_stats, nhe_ar_stats])
 	print 'AR HE/NHE Fihser:', ar_fe, ar_p_value, he_ar_stats, nhe_ar_stats
+	title = 'Comparison of proportions of AR or AR,AD and all genes with at least one variant in HetExc and HetExc- datasets'
+	export_fisher_test_results('f3_d_1.csv', title, ['HetExc', 'HetExc-'], ['AR or AR,AD', 'All'], 
+							   he_ar_stats, nhe_ar_stats, ar_fe, ar_p_value)
 
 	nhe_ad_stats = [nhe_gene_stats['ad_num'], nhe_total]
 	he_ad_stats = [he_gene_stats['ad_num'], he_total]
 
 	ad_fe, ad_p_value = fisher_exact([he_ad_stats, nhe_ad_stats])
 	print 'AD HE/NHE Fihser:', ad_fe, ad_p_value, he_ad_stats, nhe_ad_stats
-
+	title = 'Comparison of proportions of AD and all genes with at least one variant in HetExc and HetExc- datasets'
+	export_fisher_test_results('f3_d_2.csv', title, ['HetExc', 'HetExc-'], ['AD', 'All'], 
+							   he_ad_stats, nhe_ad_stats, ad_fe, ad_p_value)
 	center = []
 	height = []
 
@@ -1230,8 +1261,8 @@ def draw_f3_variant_csqs(subplot_num, f3_data):
 	xs = np.arange(0, len(x_labels))
 	bar_width, x_paddings = bar_chart_get_bar_width_and_x_paddings(2, base_width=0.9)
 
-	ax.bar(xs + x_paddings[0], nhe_percent_ys, width=bar_width, label='HetExc-')#label='HetExcess-\n({:,})'.format(nhe_total))
-	ax.bar(xs + x_paddings[1], he_percent_ys, width=bar_width, label='HetExc')#label='HetExcess\n({:,})'.format(he_total))
+	ax.bar(xs + x_paddings[0], nhe_percent_ys, width=bar_width, label='HetExc-')
+	ax.bar(xs + x_paddings[1], he_percent_ys, width=bar_width, label='HetExc')
 
 	# Percentages
 	y_text_offset = max(nhe_percent_ys + he_percent_ys) * 0.02
@@ -1259,9 +1290,14 @@ def draw_f3_variant_csqs(subplot_num, f3_data):
 	bar_1_index = 0
 	bar_2_index = 1
 	for x in range(0, len(nhe_num_ys)):
+		csq_type = x_labels[x]
 		nhe_csq_group = [nhe_num_ys[x], total_nhe]
 		he_csq_group = [he_num_ys[x], total_he]
 		csq_group_fe, csq_group_p_value = fisher_exact([nhe_csq_group, he_csq_group])
+		title = 'Comparison of ' + csq_type + ' variants proportions in HetExc and HetExc- datasets'
+		export_fisher_test_results('f3_b_' + str(x) + '.csv', title, ['HetExc', 'HetExc-'], [csq_type, 'All'], 
+								   he_csq_group, nhe_csq_group, csq_group_fe, csq_group_p_value)
+
 		barplot_annotate_brackets(bar_1_index, bar_2_index, csq_group_p_value, center, height, dh=.06, barh=.03, fs=F3_NORMAL_FONTSIZE)
 		bar_1_index += 2
 		bar_2_index += 2
@@ -1425,7 +1461,7 @@ def draw_f4(db):
 
 	fig = plt.figure(1)
 	fig.set_size_inches(7, 8)
-	plt.tight_layout(rect=[0.05, 0.02, 0.99, 0.99], h_pad=1.3, w_pad=1.3)
+	plt.tight_layout(rect=[0.06, 0.02, 0.99, 0.99], h_pad=1.7, w_pad=1.7)
 	plt.savefig(FIGURES_FOLDER + 'F4.png', format='png', dpi=300)
 	plt.close(fig)
 
@@ -1434,10 +1470,10 @@ def draw_f4(db):
 ### TABLES ###
 ##############
 
-def create_supplementary_table_1(db, all_genes=False):
+def create_supplementary_table_het_exc_genes(db, all_genes=False):
 	if all_genes:
 		selected_genes = set()
-		variants = db.hw.rare_het_excess_variants.find({})
+		variants = db.hw.rare_het_excess_variants.find({ "ab_adjusted_hwe_het_exc": True })
 		for variant in variants:
 			selected_genes.add(variant['gdit_gene_name'])
 	else:
@@ -1477,22 +1513,39 @@ def create_supplementary_table_1(db, all_genes=False):
 					'Inheritance_pattern',	
 					'phenotype',
 					'clinvar',
-					'clinvar_significance'
+					'clinvar_significance',
+					'possible_hom_ab>09',
+					'possible_hom_ab>08',
+
+					'het_ac_proportion',
+					'ab_adjusted_het',
+					'ab_adjusted_hom',
+					'ab_adjusted_hwe_p_value',
+					'ab_adjusted_balance',
 					]
 
 	# Add gnomAD 3 data
 	column_names += [
-					'ac_g3',
-					'an_g3',
-					'an_ratio_g3',
-					'af_g3',
-					'het_g3',
-					'exp_het_g3',
-					'hom_g3',
-					'exp_hom_g3',
-					'hwe_p_value_g3',
-					'balance_g3',
-					'filters_g3',
+						'gnomad_v3_variant_id',
+						'gnomad_v3_ac',
+						'gnomad_v3_an',
+						'gnomad_v3_an_ratio',
+						'gnomad_v3_af',
+						'gnomad_v3_het',
+						'gnomad_v3_exp_het',
+						'gnomad_v3_hom',
+						'gnomad_v3_exp_hom',
+						'gnomad_v3_hwe_p_value',
+						'gnomad_v3_balance',
+						'gnomad_v3_filters',
+						'gnomad_v3_ab_mid_ratio',
+						'gnomad_v3_possible_hom_ab>09',
+						'gnomad_v3_possible_hom_ab>08',
+						'gnomad_v3_het_ac_proportion',
+						'gnomad_v3_ab_adjusted_het',
+						'gnomad_v3_ab_adjusted_hom',
+						'gnomad_v3_ab_adjusted_hwe_p_value',
+						'gnomad_v3_ab_adjusted_balance',
 					]
 
 
@@ -1516,7 +1569,7 @@ def create_supplementary_table_1(db, all_genes=False):
 	write_table_to_csv(table, output_csv)
 
 
-def create_supplementary_table_2(db):
+def create_supplementary_table_1000g(db):
 	hbb_variant = '11-5248232-T-A' # HBB
 	chd6_variant = '20-40040825-C-G' # CHD6
 
@@ -1538,6 +1591,18 @@ def create_supplementary_table_2(db):
 			afr_individuals.add(individual['_id'])
 
 	variant_ids = [hbb_variant, chd6_variant]
+	# gnomad 3 survived AFR variants
+	'''
+	variant_ids = [
+					'11-5248232-T-A',
+					'20-40040825-C-G',
+					'11-126075608-G-A',
+					'22-42610871-G-A',
+					'1-22166484-C-T',
+					'14-92471202-T-C',
+					'20-33862165-G-A',
+				   ]
+	'''
 	headers = ['Variant ID', 
 			   'African (AFR) populations', 
 			   'African American (AFR-AMR) populations',
@@ -1676,7 +1741,7 @@ def report_initial_and_future_dataset_pop_limits(db, pop):
 	gnomad_detectable_variants = set([])
 	m1_detectable_variants = set([])
 	m5_detectable_variants = set([])
-	variants = db.hw.variants_hwe_pop.find({"pop": pop, "all_pop_an_ratio_pass": True, "alt_af": { "$lt": 0.001 }, "af": {"$lt": RARE_HET_EXCESS_MAX_AF }}) # , "af": {"$lt": RARE_HET_EXCESS_MAX_AF }
+	variants = db.hw.variants_hwe_pop.find({"pop": pop, "all_pop_an_ratio_pass": True, "alt_af": { "$lt": 0.001 }, "af": {"$lte": RARE_HET_EXCESS_MAX_AF }}) # , "af": {"$lt": RARE_HET_EXCESS_MAX_AF }
 	
 	for variant in variants:
 		variant_id = variant['variant_id']
@@ -1695,30 +1760,38 @@ def report_initial_and_future_dataset_pop_limits(db, pop):
 	print '5 Million detectable {} ({:.2f}%)'.format(len(m5_detectable_variants), len(m5_detectable_variants) * 100 / float(len(total_variants)))
 
 
-def print_final_dataset_stats(db):
-	print 'Final dataset stats'
-	variants = db.hw.rare_het_excess_variants.find({})
+def print_final_dataset_stats(db, ab_adjusted_hwe_het_exc=False):
+	if ab_adjusted_hwe_het_exc:
+		print '### Final HetExc dataset stats ###'
+		variants = db.hw.rare_het_excess_variants.find({'ab_adjusted_hwe_het_exc': True})
+	else:
+		print '### HetExc dataset stats before HWE recalculation with adjusted AB ###'
+		variants = db.hw.rare_het_excess_variants.find({})
 
 	total_variants = variants.count()
 	unique_variants = set([])
 	unique_genes = set([])
 	miss_variants = set([])
 	syn_variants = set([])
+	afr_variants = set([])
 
 	for variant in variants:
-		unique_variants.add(variant['variant_id'])
+		variant_id = variant['variant_id']
+		unique_variants.add(variant_id)
 		unique_genes.add(variant['gdit_gene_name'])
-
+		if variant['pop'] == 'AFR':
+			afr_variants.add(variant_id)
 		if variant['csq'] == 'missense_variant':
-			miss_variants.add(variant['variant_id'])
+			miss_variants.add(variant_id)
 		if variant['csq'] == 'synonymous_variant':
-			syn_variants.add(variant['variant_id'])
+			syn_variants.add(variant_id)
 
 	print 'Total variants:', total_variants
 	print 'Unique variants:', len(unique_variants)
 	print 'Unique genes:', len(unique_genes)
-	print 'Missense {}, {0:.1f}%'.format(len(miss_variants), float(len(miss_variants)) / len(unique_variants))
-	print 'Synonymous {}, {0:.1f}%'.format(len(syn_variants), float(len(syn_variants)) / len(unique_variants))
+	print 'Missense {}, {:.2f}%'.format(len(miss_variants), float(len(miss_variants)) * 100 / len(unique_variants))
+	print 'Synonymous {}, {:.2f}%'.format(len(syn_variants), float(len(syn_variants)) * 100 / len(unique_variants))
+	print 'AFR variants {}, {:.2f}%'.format(len(afr_variants), float(len(afr_variants)) * 100 / len(unique_variants))
 
 
 def print_graffelman_japanese_stats(db):
@@ -1744,7 +1817,7 @@ def report_clinvar_statuses_and_csqs_of_het_exc_ar_variants(db):
 	all_clinvar = set()
 	benign_variants = set()
 	syn_variants = set()
-	variants = db.hw.rare_het_excess_variants.find({ "$or": [ { "Inheritance_pattern": "AR" }, { "Inheritance_pattern": "AR,AD" } ] })
+	variants = db.hw.rare_het_excess_variants.find({"ab_adjusted_hwe_het_exc": True, "$or": [ { "Inheritance_pattern": "AR" }, { "Inheritance_pattern": "AR,AD" } ] })
 	for variant in variants:
 		variant_id = variant['variant_id']
 
@@ -1780,6 +1853,23 @@ def report_cftr_g2_vs_g3(db):
 	print 'fold enrichement', fe, 'p-value', p_value
 
 
+def report_number_of_unique_het_exc_variants_with_skewed_allele_balance(db, ab_group):
+	print ab_group
+	variants = db.hw.rare_het_excess_variants.find({ ab_group: { "$gt": 0 } })
+	unique_variants = set()
+	for variant in variants:
+		unique_variants.add(variant['variant_id'])
+	print 'Unique HetExc variants with skewed allele balance:', len(unique_variants)
+
+
+def report_number_of_more_significant_het_exc_variants(db, p_value_threshold):
+	unique_variants = set()
+	variants = db.hw.rare_het_excess_variants.find({"hwe_p_value": { "$lte": p_value_threshold }})
+	for variant in variants:
+		unique_variants.add(variant['variant_id'])
+	print 'HetExc variants with p-value <=' + str(p_value_threshold) + ':', len(unique_variants)
+
+
 def main():
 	db = MongoDB()
 	# Uncomment the functions to recreate/report Hardy-Weinberg Equilibrium (HWE) analysis results.
@@ -1807,7 +1897,7 @@ def main():
 	#draw_f4(db) # Figure 2 in the manuscript
 
 	# Supplementary Table 1: HetExc variant dataset
-	#create_supplementary_table_1(db, all_genes=True)
+	#create_supplementary_table_het_exc_genes(db, all_genes=True)
 
 	'''
 	Recreation of Supplementary Table 2 requires 1000 Genomes data.
@@ -1822,11 +1912,11 @@ def main():
 	OR VCF files:
 	ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/
 	'''
-	#create_supplementary_table_2(db)
+	#create_supplementary_table_1000g(db)
 
-	#############################################################
+	###############################################################
 	### Functions to calculate stats reported in the manuscript ###
-	#############################################################
+	###############################################################
 
 	# Uncomment the functions to see the stats reported in the terminal.
 
@@ -1834,7 +1924,8 @@ def main():
 	#print_initial_variant_dataset_stats(db)
 
 	# Report stats of HetExc dataset.
-	#print_final_dataset_stats(db)
+	#print_final_dataset_stats(db, ab_adjusted_hwe_het_exc=False)
+	#print_final_dataset_stats(db, ab_adjusted_hwe_het_exc=True)
 	
 	# Report stats used in discussion of the previous work.
 	#print_chen_stats(db)
@@ -1843,6 +1934,11 @@ def main():
 	# Report proportion of synonymous variants among HetExc variants observed in known AR genes.
 	#report_clinvar_statuses_and_csqs_of_het_exc_ar_variants(db)
 	
+	# Report number of unique HetExc variants with skewed allele balance (>0.9)
+	# which might have more homozygoues and therefore their HWE statistics might be inacurate 
+	#report_number_of_unique_het_exc_variants_with_skewed_allele_balance(db, 'het_with_skewed_allele_balance_>09')
+	#report_number_of_unique_het_exc_variants_with_skewed_allele_balance(db, 'het_with_skewed_allele_balance_>08')
+
 	# Calculate required population size to detect statistical significant HetExc of c.448G>C (rs1800546) variant in ALDOB based on its AF
 	#print calculate_minimum_population_number_required_to_achive_significance_for_af(0.0049, p_value_threshold=HWE_P_VALUE_THRESHOLD)
 	
@@ -1856,6 +1952,8 @@ def main():
 	# Temporary function to check ClinVar statuses of HetExc variants, used to manage hard coded values in Figure 3.
 	#report_clinvar_statuses_in_rare_het_excess_genes(db)
 
+	# Report number of HetExc variants with p-value<=X
+	#report_number_of_more_significant_het_exc_variants(db, 0.01)
 
 if __name__ == "__main__":
 	sys.exit(main())

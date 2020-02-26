@@ -1,0 +1,6 @@
+Comparison of proportions of variants deviating and not deviating from HWE due to excess of heterozygotes (HetExc and HetExc- respectively) in 7 major gnomAD populations.,,
+,NFE,all populations
+HetExc,2,161
+HetExc-,11499,39430
+fold_enrichemnt:,0.042596196590683824,
+p-value:,1.5385513460325253e-15,
