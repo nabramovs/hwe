@@ -1,5 +1,5 @@
 pymongo==3.5.0
-numpy==1.16.1
+numpy==1.22.0
 progressbar2==3.34.2
 matplotlib==2.2.4
 scipy==0.19.1
